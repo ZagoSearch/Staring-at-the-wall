@@ -1,0 +1,1168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Staring at the Wall</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Special+Elite&display=swap" rel="stylesheet">
+
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      -webkit-tap-highlight-color: transparent;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background-color: #000000;
+      color: #e5e5e5;
+      font-family: 'IBM Plex Mono', monospace;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+    }
+    .handwriting {
+      font-family: 'Caveat', cursive;
+    }
+    .stamp-font {
+      font-family: 'Special Elite', monospace;
+    }
+    .wall-viewport {
+      cursor: grab;
+      touch-action: none;
+      -webkit-user-select: none;
+    }
+    .wall-viewport.panning {
+      cursor: grabbing;
+    }
+
+    /* Sticky Paper Styling with 3D Flip capability */
+    .note-wrapper {
+      perspective: 1000px;
+      touch-action: none;
+      position: absolute;
+    }
+    .sticky-note {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, opacity 0.3s ease;
+      transform-style: preserve-3d;
+      box-shadow: 2px 4px 15px rgba(0, 0, 0, 0.7), 0 1px 2px rgba(0,0,0,0.5);
+    }
+    .note-wrapper:hover .sticky-note {
+      box-shadow: 4px 14px 28px rgba(0, 0, 0, 0.85);
+      z-index: 500 !important;
+    }
+    .note-wrapper.dragging .sticky-note {
+      opacity: 0.94;
+      cursor: grabbing !important;
+      transform: scale(1.03) rotate(0deg) !important;
+      box-shadow: 12px 24px 38px rgba(0, 0, 0, 0.95);
+      z-index: 9999 !important;
+    }
+
+    /* Face-down flip effect */
+    .sticky-note.is-facedown {
+      transform: rotateY(180deg) !important;
+    }
+    .note-front, .note-back {
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+    }
+    .note-back {
+      transform: rotateY(180deg);
+      background-image: repeating-linear-gradient(45deg, rgba(0,0,0,0.03) 0, rgba(0,0,0,0.03) 2px, transparent 0, transparent 8px);
+    }
+
+    .folded-corner {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 0;
+      height: 0;
+      border-style: solid;
+      border-width: 0 0 20px 20px;
+      border-color: transparent transparent #000000 transparent;
+      opacity: 0.25;
+      cursor: pointer;
+      transition: border-width 0.15s ease, opacity 0.15s ease;
+    }
+    .sticky-note.folded .folded-corner {
+      border-width: 0 0 32px 32px;
+      opacity: 0.45;
+    }
+
+    /* Ink Stamp Mark */
+    .ink-stamp {
+      letter-spacing: 1px;
+      border-width: 2px;
+      display: inline-block;
+      text-transform: uppercase;
+      opacity: 0.88;
+      mix-blend-mode: multiply;
+      pointer-events: none;
+      animation: stampDrop 0.12s cubic-bezier(0.1, 0.9, 0.2, 1);
+    }
+    @keyframes stampDrop {
+      0% { transform: scale(1.8) rotate(var(--rot)); opacity: 0; }
+      100% { transform: scale(1) rotate(var(--rot)); opacity: 0.88; }
+    }
+
+    /* Crumple removal */
+    @keyframes crumple {
+      0% { transform: scale(1) rotate(0deg); opacity: 1; }
+      50% { transform: scale(0.6) rotate(25deg); opacity: 0.6; filter: contrast(180%); }
+      100% { transform: scale(0) rotate(90deg); opacity: 0; margin-top: 100px; }
+    }
+    .crumpling {
+      animation: crumple 0.35s forwards cubic-bezier(0.6, -0.28, 0.735, 0.045) !important;
+      pointer-events: none;
+    }
+
+    /* Minimap container */
+    #radarMap {
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(8px);
+    }
+    .radar-blip {
+      position: absolute;
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .radar-camera-box {
+      position: absolute;
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      background: rgba(255, 255, 255, 0.06);
+      pointer-events: none;
+    }
+
+    /* Prevent mobile text input zooming by maintaining min 16px */
+    .mobile-input-safe {
+      font-size: 16px !important;
+    }
+    @media (min-width: 640px) {
+      .mobile-input-safe {
+        font-size: 13px !important;
+      }
+    }
+  </style>
+</head>
+
+<body class="w-screen h-screen bg-black text-neutral-300 flex flex-col overflow-hidden">
+
+  <!-- Responsive Header -->
+  <header class="min-h-14 py-2 border-b border-neutral-900 px-3 sm:px-6 flex flex-wrap items-center justify-between gap-2 bg-black/95 z-50 select-none">
+    
+    <!-- Title & Presence Status -->
+    <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+      <span class="text-xs sm:text-sm font-semibold tracking-widest uppercase text-white">The Wall</span>
+      <span class="text-neutral-700 hidden sm:inline">/</span>
+      <div class="flex items-center gap-1.5 sm:gap-2">
+        <span class="relative flex h-2 w-2">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+        </span>
+        <span id="liveCounter" class="text-[10px] sm:text-[11px] text-neutral-400 font-mono tracking-tight">3 staring</span>
+      </div>
+    </div>
+
+    <!-- Quick Thought Input with Cooldown and Mobile-Safe Font -->
+    <form id="stickForm" class="order-3 sm:order-2 w-full sm:flex-1 sm:max-w-xl flex items-center gap-1.5 sm:gap-2 mt-1 sm:mt-0">
+      <div class="relative flex-1">
+        <input 
+          id="postInput" 
+          type="text" 
+          maxlength="220" 
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Stick a thought on the wall..." 
+          class="mobile-input-safe w-full bg-neutral-950 border border-neutral-800 text-neutral-100 placeholder-neutral-600 px-3 py-1.5 rounded focus:outline-none focus:border-neutral-500 transition font-mono disabled:opacity-40 disabled:cursor-not-allowed"
+        />
+        <span id="charCount" class="absolute right-2 top-2 text-[10px] text-neutral-600 pointer-events-none hidden md:inline">220</span>
+      </div>
+
+      <!-- Color Swatches: Optimized touch target sizes -->
+      <div class="flex items-center gap-1 shrink-0" id="colorPalette">
+        <!-- Injected via JS -->
+      </div>
+
+      <!-- Submit button -->
+      <button 
+        type="submit" 
+        id="stickSubmitBtn"
+        class="min-h-[38px] min-w-[54px] bg-neutral-100 hover:bg-white text-black text-xs font-semibold px-3 py-1.5 rounded active:scale-95 transition shrink-0 flex items-center justify-center disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed"
+      >
+        <span id="submitBtnText">Stick</span>
+      </button>
+    </form>
+
+    <!-- Toolbar controls: Drift, Recenter, Audio -->
+    <div class="order-2 sm:order-3 flex items-center gap-1.5 sm:gap-2 shrink-0">
+      <button 
+        id="driftBtn" 
+        title="Drift to a random note" 
+        class="h-8 text-[11px] text-neutral-400 hover:text-white font-mono px-2.5 rounded border border-neutral-800 hover:border-neutral-700 transition flex items-center gap-1 active:bg-neutral-900"
+      >
+        <span>drift</span>
+      </button>
+      <button 
+        id="recenterBtn" 
+        title="Reset camera to center" 
+        class="h-8 text-[11px] text-neutral-500 hover:text-neutral-300 font-mono px-2 rounded border border-neutral-900 hover:border-neutral-700 transition hidden md:block active:bg-neutral-900"
+      >
+        [0,0]
+      </button>
+      <button 
+        id="audioToggleBtn" 
+        title="Toggle paper sounds" 
+        class="h-8 text-xs text-neutral-400 hover:text-white px-2.5 rounded transition border border-neutral-800 active:bg-neutral-900 flex items-center justify-center"
+      >
+        <span id="audioIcon">🔊</span>
+      </button>
+    </div>
+  </header>
+
+  <main id="wallViewport" class="wall-viewport relative flex-1 w-full overflow-hidden bg-black">
+    <!-- Panned surface (6000x6000px) -->
+    <div id="wallSurface" class="absolute top-0 left-0 w-[6000px] h-[6000px] pointer-events-auto">
+      <div class="absolute inset-0 opacity-[0.03] pointer-events-none" style="background-image: radial-gradient(#ffffff 1px, transparent 1px); background-size: 40px 40px;"></div>
+      <div id="notesContainer" class="relative w-full h-full"></div>
+    </div>
+
+    <!-- Empty Slate Overlay -->
+    <div id="emptyOverlay" class="absolute inset-0 pointer-events-none hidden flex-col items-center justify-center text-center p-6 select-none">
+      <p class="text-neutral-600 text-sm font-mono tracking-wide">The wall is blank.</p>
+      <p class="text-neutral-700 text-xs mt-1">Type above and slap the first note onto the dark.</p>
+    </div>
+
+    <!-- Mobile Collapsible Mini Radar / Minimap -->
+    <div id="radarWrapper" class="absolute bottom-3 right-3 flex flex-col items-end gap-1.5 z-40 select-none">
+      <button 
+        id="radarToggleBtn" 
+        class="text-[9px] font-mono text-neutral-500 bg-neutral-950/80 px-2 py-1 rounded border border-neutral-800 hover:text-neutral-300 sm:hidden"
+      >
+        [map]
+      </button>
+      <div id="radarMap" class="w-24 h-24 sm:w-32 sm:h-32 bg-black/85 rounded border border-neutral-800 overflow-hidden relative pointer-events-auto cursor-pointer" title="Tap to teleport view">
+        <div class="absolute inset-0 opacity-15" style="background-image: linear-gradient(to right, #333 1px, transparent 1px), linear-gradient(to bottom, #333 1px, transparent 1px); background-size: 16px 16px;"></div>
+        <div id="radarBlipsContainer" class="absolute inset-0"></div>
+        <div id="radarCamBox" class="radar-camera-box"></div>
+        <span class="absolute top-1 left-1.5 text-[7px] sm:text-[8px] text-neutral-600 font-mono tracking-wider">RADAR</span>
+      </div>
+    </div>
+
+    <!-- Footer helper hint (hidden on very small viewports to save space) -->
+    <div class="absolute bottom-3 left-3 text-[10px] text-neutral-700 font-mono pointer-events-none select-none hidden sm:flex gap-3">
+      <span>Drag notes to move</span>
+      <span>•</span>
+      <span>Drag background to pan</span>
+      <span>•</span>
+      <span>Double click corner to fold</span>
+    </div>
+  </main>
+
+  <script>
+    class SoundFX {
+      constructor() {
+        this.ctx = null;
+        this.muted = false;
+      }
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+      playPaperRustle() {
+        if (this.muted) return;
+        this.init();
+        try {
+          const bufferSize = this.ctx.sampleRate * 0.08;
+          const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.3));
+          }
+          const noise = this.ctx.createBufferSource();
+          noise.buffer = buffer;
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'bandpass';
+          filter.frequency.value = 1400;
+          filter.Q.value = 1.2;
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.08);
+          noise.connect(filter);
+          filter.connect(gain);
+          gain.connect(this.ctx.destination);
+          noise.start();
+        } catch(e){}
+      }
+      playStampThud() {
+        if (this.muted) return;
+        this.init();
+        try {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(140, this.ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(30, this.ctx.currentTime + 0.09);
+          gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.09);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start();
+          osc.stop(this.ctx.currentTime + 0.1);
+        } catch(e){}
+      }
+      playFlipSwoosh() {
+        if (this.muted) return;
+        this.init();
+        try {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(320, this.ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(80, this.ctx.currentTime + 0.12);
+          gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.12);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start();
+          osc.stop(this.ctx.currentTime + 0.13);
+        } catch(e){}
+      }
+      playCrumple() {
+        if (this.muted) return;
+        this.init();
+        try {
+          const bufferSize = this.ctx.sampleRate * 0.18;
+          const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * Math.pow(1 - (i / bufferSize), 1.5);
+          }
+          const noise = this.ctx.createBufferSource();
+          noise.buffer = buffer;
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'highpass';
+          filter.frequency.value = 800;
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.18);
+          noise.connect(filter);
+          filter.connect(gain);
+          gain.connect(this.ctx.destination);
+          noise.start();
+        } catch(e){}
+      }
+    }
+    const sound = new SoundFX();
+  </script>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { 
+      getFirestore, 
+      collection, 
+      doc, 
+      setDoc, 
+      updateDoc, 
+      deleteDoc, 
+      onSnapshot 
+    } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const CANVAS_SIZE = 6000;
+    const POST_COOLDOWN_SECONDS = 30;
+    const AGE_DECAY_THRESHOLD_MS = 48 * 60 * 60 * 1000;
+
+    const COLORS = [
+      { id: 'yellow', name: 'Canary', bg: '#fef08a', text: '#18181b', border: '#eab308' },
+      { id: 'mint',   name: 'Mint',   bg: '#dcfce7', text: '#14532d', border: '#86efac' },
+      { id: 'rose',   name: 'Rose',   bg: '#ffe4e6', text: '#881337', border: '#fda4af' },
+      { id: 'cyan',   name: 'Sky',    bg: '#e0f2fe', text: '#0c4a6e', border: '#7dd3fc' },
+      { id: 'chalk',  name: 'Chalk',  bg: '#f5f5f5', text: '#171717', border: '#d4d4d4' },
+      { id: 'carbon', name: 'Carbon', bg: '#1c1917', text: '#e7e5e4', border: '#44403c' }
+    ];
+
+    const STAMPS = [
+      { text: 'SAME', color: '#dc2626' },
+      { text: 'MOOD', color: '#2563eb' },
+      { text: 'REAL', color: '#16a34a' },
+      { text: 'BULLSHIT', color: '#ea580c' },
+      { text: 'WHY', color: '#9333ea' }
+    ];
+
+    let selectedColor = COLORS[0];
+    let notes = [];
+    let isDraggingNote = false;
+    let isPanningWall = false;
+    let panX = -1800;
+    let panY = -1800;
+    let panStartX = 0;
+    let panStartY = 0;
+    let activeReplyNoteId = null;
+    let cooldownRemaining = 0;
+    let cooldownTimer = null;
+
+    let db = null;
+    let auth = null;
+    let currentUser = null;
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'staring-at-the-wall-v1';
+
+    // DOM Elements
+    const wallViewport = document.getElementById('wallViewport');
+    const wallSurface = document.getElementById('wallSurface');
+    const notesContainer = document.getElementById('notesContainer');
+    const stickForm = document.getElementById('stickForm');
+    const postInput = document.getElementById('postInput');
+    const charCount = document.getElementById('charCount');
+    const stickSubmitBtn = document.getElementById('stickSubmitBtn');
+    const submitBtnText = document.getElementById('submitBtnText');
+    const colorPalette = document.getElementById('colorPalette');
+    const audioToggleBtn = document.getElementById('audioToggleBtn');
+    const audioIcon = document.getElementById('audioIcon');
+    const recenterBtn = document.getElementById('recenterBtn');
+    const driftBtn = document.getElementById('driftBtn');
+    const liveCounter = document.getElementById('liveCounter');
+    const emptyOverlay = document.getElementById('emptyOverlay');
+    const radarMap = document.getElementById('radarMap');
+    const radarBlipsContainer = document.getElementById('radarBlipsContainer');
+    const radarCamBox = document.getElementById('radarCamBox');
+    const radarToggleBtn = document.getElementById('radarToggleBtn');
+
+    // Pan viewport
+    function applyPan(transition = false) {
+      if (transition) {
+        wallSurface.style.transition = 'transform 0.5s cubic-bezier(0.25, 1, 0.5, 1)';
+      } else {
+        wallSurface.style.transition = 'none';
+      }
+      wallSurface.style.transform = `translate3d(${panX}px, ${panY}px, 0)`;
+      updateRadarCamera();
+    }
+
+    // Audio toggle
+    audioToggleBtn.addEventListener('click', () => {
+      sound.muted = !sound.muted;
+      audioIcon.textContent = sound.muted ? '🔇' : '🔊';
+      if (!sound.muted) sound.playPaperRustle();
+    });
+
+    // Recenter
+    recenterBtn.addEventListener('click', () => {
+      centerWall(true);
+      sound.playPaperRustle();
+    });
+
+    function centerWall(animated = false) {
+      const vw = window.innerWidth;
+      const vh = wallViewport.clientHeight;
+      panX = -(CANVAS_SIZE / 2 - vw / 2);
+      panY = -(CANVAS_SIZE / 2 - vh / 2);
+      applyPan(animated);
+    }
+
+    // Drift / Teleport to Random Note
+    driftBtn.addEventListener('click', () => {
+      if (notes.length === 0) return;
+      sound.playPaperRustle();
+      const targetNote = notes[Math.floor(Math.random() * notes.length)];
+      const vw = window.innerWidth;
+      const vh = wallViewport.clientHeight;
+      panX = -(targetNote.x - vw / 2 + 120);
+      panY = -(targetNote.y - vh / 2 + 80);
+      applyPan(true);
+    });
+
+    // Radar Minimap toggle for small screens
+    radarToggleBtn.addEventListener('click', () => {
+      radarMap.classList.toggle('hidden');
+      radarToggleBtn.textContent = radarMap.classList.contains('hidden') ? '[+map]' : '[-map]';
+    });
+
+    // Cooldown management
+    function startCooldown(seconds) {
+      cooldownRemaining = seconds;
+      stickSubmitBtn.disabled = true;
+      postInput.disabled = true;
+
+      clearInterval(cooldownTimer);
+      cooldownTimer = setInterval(() => {
+        cooldownRemaining--;
+        if (cooldownRemaining <= 0) {
+          clearInterval(cooldownTimer);
+          stickSubmitBtn.disabled = false;
+          postInput.disabled = false;
+          submitBtnText.textContent = 'Stick';
+        } else {
+          submitBtnText.textContent = `${cooldownRemaining}s`;
+        }
+      }, 1000);
+    }
+
+    // Palette rendering with 40-44px touch areas
+    function renderPalette() {
+      colorPalette.innerHTML = '';
+      COLORS.forEach(c => {
+        const tapWrap = document.createElement('button');
+        tapWrap.type = 'button';
+        tapWrap.title = c.name;
+        // Large touch hit area (h-8 w-6 sm:w-auto) with visible dot inside
+        tapWrap.className = 'h-8 px-1 flex items-center justify-center cursor-pointer';
+        
+        const dot = document.createElement('span');
+        dot.style.backgroundColor = c.bg;
+        dot.className = `w-4 h-4 rounded-full border transition pointer-events-none ${
+          selectedColor.id === c.id ? 'scale-125 border-white ring-1 ring-white/50' : 'border-neutral-700 opacity-60'
+        }`;
+
+        tapWrap.appendChild(dot);
+        tapWrap.onclick = (e) => {
+          e.preventDefault();
+          selectedColor = c;
+          renderPalette();
+          sound.playPaperRustle();
+        };
+        colorPalette.appendChild(tapWrap);
+      });
+    }
+
+    postInput.addEventListener('input', () => {
+      charCount.textContent = 220 - postInput.value.length;
+    });
+
+    function initLivePresence() {
+      let count = 3 + Math.floor(Math.random() * 4);
+      liveCounter.textContent = `${count} staring`;
+      setInterval(() => {
+        const delta = Math.random() > 0.5 ? 1 : -1;
+        count = Math.max(2, count + (Math.random() > 0.7 ? delta : 0));
+        liveCounter.textContent = `${count} staring`;
+      }, 7500);
+    }
+
+    function setupWallPanning() {
+      let startClientX = 0;
+      let startClientY = 0;
+
+      const onPointerDown = (e) => {
+        if (e.target.closest('.note-wrapper') || e.target.closest('button') || e.target.closest('input') || e.target.closest('#radarWrapper')) {
+          return;
+        }
+        isPanningWall = true;
+        wallSurface.style.transition = 'none';
+        wallViewport.classList.add('panning');
+
+        startClientX = e.clientX || (e.touches && e.touches[0].clientX);
+        startClientY = e.clientY || (e.touches && e.touches[0].clientY);
+        panStartX = panX;
+        panStartY = panY;
+      };
+
+      const onPointerMove = (e) => {
+        if (!isPanningWall) return;
+        const curX = e.clientX || (e.touches && e.touches[0].clientX);
+        const curY = e.clientY || (e.touches && e.touches[0].clientY);
+        panX = panStartX + (curX - startClientX);
+        panY = panStartY + (curY - startClientY);
+        applyPan(false);
+      };
+
+      const onPointerUp = () => {
+        if (isPanningWall) {
+          isPanningWall = false;
+          wallViewport.classList.remove('panning');
+        }
+      };
+
+      // Pointer & Touch support
+      wallViewport.addEventListener('pointerdown', onPointerDown);
+      window.addEventListener('pointermove', onPointerMove, { passive: true });
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', onPointerUp);
+    }
+
+    function updateRadarCamera() {
+      const vw = window.innerWidth;
+      const vh = wallViewport.clientHeight;
+      const radarW = radarMap.clientWidth || 96;
+      const radarH = radarMap.clientHeight || 96;
+
+      const scaleX = radarW / CANVAS_SIZE;
+      const scaleY = radarH / CANVAS_SIZE;
+
+      const camX = -panX * scaleX;
+      const camY = -panY * scaleY;
+      const camW = vw * scaleX;
+      const camH = vh * scaleY;
+
+      radarCamBox.style.left = `${Math.max(0, camX)}px`;
+      radarCamBox.style.top = `${Math.max(0, camY)}px`;
+      radarCamBox.style.width = `${Math.min(radarW, camW)}px`;
+      radarCamBox.style.height = `${Math.min(radarH, camH)}px`;
+    }
+
+    function renderRadarBlips() {
+      radarBlipsContainer.innerHTML = '';
+      const radarW = radarMap.clientWidth || 96;
+      const scale = radarW / CANVAS_SIZE;
+
+      notes.forEach(n => {
+        const blip = document.createElement('div');
+        blip.className = 'radar-blip';
+        blip.style.left = `${(n.x + 110) * scale}px`;
+        blip.style.top = `${(n.y + 80) * scale}px`;
+        blip.style.backgroundColor = n.faceDown ? '#525252' : (n.color?.bg || '#fef08a');
+        blip.style.boxShadow = `0 0 3px ${n.faceDown ? '#262626' : (n.color?.bg || '#fef08a')}`;
+        radarBlipsContainer.appendChild(blip);
+      });
+    }
+
+    // Teleport camera on radar tap
+    radarMap.addEventListener('click', (e) => {
+      const rect = radarMap.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+      const radarW = radarMap.clientWidth;
+      const scale = CANVAS_SIZE / radarW;
+      const targetCanvasX = clickX * scale;
+      const targetCanvasY = clickY * scale;
+
+      const vw = window.innerWidth;
+      const vh = wallViewport.clientHeight;
+      panX = -(targetCanvasX - vw / 2);
+      panY = -(targetCanvasY - vh / 2);
+      applyPan(true);
+      sound.playPaperRustle();
+    });
+
+    function renderNotes() {
+      notesContainer.innerHTML = '';
+      renderRadarBlips();
+      updateRadarCamera();
+
+      if (notes.length === 0) {
+        emptyOverlay.classList.remove('hidden');
+        emptyOverlay.classList.add('flex');
+        return;
+      }
+      emptyOverlay.classList.add('hidden');
+      emptyOverlay.classList.remove('flex');
+
+      const now = Date.now();
+
+      notes.forEach(note => {
+        const wrapper = document.createElement('div');
+        const color = note.color || COLORS[0];
+        const isFacedown = Boolean(note.faceDown);
+
+        // Age Decay calculation
+        const age = now - (note.createdAt || now);
+        const hasInteractions = (note.stamps?.length > 0) || (note.replies?.length > 0);
+        let opacityVal = 1;
+        if (age > AGE_DECAY_THRESHOLD_MS && !hasInteractions) {
+          const decayRatio = Math.min(1, (age - AGE_DECAY_THRESHOLD_MS) / (72 * 60 * 60 * 1000));
+          opacityVal = Math.max(0.48, 1 - (decayRatio * 0.52));
+        }
+
+        wrapper.id = `note-${note.id}`;
+        // Mobile-friendly width: 230px on small screens, 270px on desktop
+        wrapper.className = `note-wrapper select-none w-[230px] sm:w-64 md:w-72`;
+        wrapper.style.left = `${note.x}px`;
+        wrapper.style.top = `${note.y}px`;
+        wrapper.style.opacity = opacityVal;
+
+        const tilt = note.tilt || 0;
+        const stampList = note.stamps || [];
+        const replyList = note.replies || [];
+
+        wrapper.innerHTML = `
+          <div class="sticky-note p-3.5 sm:p-4 rounded-sm flex flex-col justify-between text-black ${note.folded ? 'folded' : ''} ${isFacedown ? 'is-facedown' : ''}" style="background-color: ${color.bg}; color: ${color.text}; border-top: 1px solid ${color.border || '#cbd5e1'}; transform: rotate(${tilt}deg);">
+            
+            <!-- Front Face -->
+            <div class="note-front flex flex-col justify-between h-full">
+              <!-- Header Bar inside Note with generous tap targets -->
+              <div class="flex items-center justify-between opacity-55 text-[10px] pb-1.5 border-b border-black/10 select-none">
+                <span class="font-mono">${formatDate(note.createdAt || now)}</span>
+                <div class="flex items-center gap-1">
+                  <button class="flip-btn py-1 px-1.5 hover:text-black hover:opacity-100 tracking-tight font-mono text-[9px] active:scale-95" title="Turn face down">[flip]</button>
+                  <button class="crumple-btn py-1 px-2 hover:text-black hover:opacity-100 font-bold active:scale-95 text-xs" title="Crumple into the bin">✕</button>
+                </div>
+              </div>
+
+              <!-- Thought Content -->
+              <div class="py-2 font-normal text-sm sm:text-base leading-snug break-words tracking-tight whitespace-pre-wrap handwriting select-text cursor-auto">
+                ${escapeHtml(note.text)}
+              </div>
+
+              <!-- Ink Stamps Row -->
+              <div class="flex flex-wrap gap-1.5 my-1 min-h-[14px]">
+                ${renderStampBadges(stampList)}
+              </div>
+
+              <!-- Inline Replies -->
+              ${replyList.length > 0 ? `
+                <div class="replies-box max-h-24 overflow-y-auto space-y-1.5 pt-1.5 mt-1 border-t border-black/10 font-mono text-[10px] sm:text-[11px]">
+                  ${replyList.map(r => `
+                    <div class="bg-black/5 rounded px-2 py-1 leading-tight break-words">
+                      <span class="opacity-40 text-[9px] mr-1">↳</span>${escapeHtml(r.text)}
+                    </div>
+                  `).join('')}
+                </div>
+              ` : ''}
+
+              <!-- Bottom Action Bar (Large touch areas) -->
+              <div class="pt-2 mt-1.5 border-t border-black/10 flex items-center justify-between text-[11px] font-mono">
+                <div class="relative stamp-dropdown">
+                  <button class="stamp-menu-btn py-1.5 px-1 opacity-70 hover:opacity-100 font-medium active:scale-95 flex items-center gap-1 transition">
+                    <span>[stamp]</span>
+                  </button>
+                  <div class="stamp-menu hidden absolute bottom-8 left-0 bg-neutral-900 border border-neutral-800 shadow-2xl rounded p-1.5 flex gap-1 z-50">
+                    ${STAMPS.map(s => `
+                      <button data-stamp="${s.text}" class="stamp-opt min-h-[32px] text-[10px] font-bold px-2 py-1 rounded hover:bg-neutral-800 transition tracking-wider active:scale-95" style="color: ${s.color};">
+                        ${s.text}
+                      </button>
+                    `).join('')}
+                  </div>
+                </div>
+
+                <button class="reply-toggle-btn py-1.5 px-1 opacity-70 hover:opacity-100 font-medium active:scale-95 transition">
+                  + scribble
+                </button>
+              </div>
+
+              <!-- Scribble Form -->
+              <div class="reply-form-wrap ${activeReplyNoteId === note.id ? 'block' : 'hidden'} mt-2 pt-2 border-t border-black/10">
+                <form class="reply-form flex gap-1">
+                  <input 
+                    type="text" 
+                    maxlength="100" 
+                    placeholder="write in margins..." 
+                    class="mobile-input-safe reply-input flex-1 bg-black/10 border border-black/20 text-xs px-2 py-1.5 rounded placeholder-black/40 focus:outline-none focus:border-black/50 font-mono"
+                  />
+                  <button type="submit" class="bg-black/85 text-white text-[11px] px-2.5 py-1.5 rounded hover:bg-black font-mono active:scale-95">
+                    Add
+                  </button>
+                </form>
+              </div>
+            </div>
+
+            <!-- Back Face (Face-down cardstock) -->
+            <div class="note-back absolute inset-0 p-4 rounded-sm flex flex-col items-center justify-center text-center cursor-pointer bg-neutral-900 text-neutral-500 border border-neutral-800" title="Turn face up">
+              <span class="text-xs font-mono opacity-50 tracking-widest uppercase mb-1">Face Down</span>
+              <span class="text-[10px] text-neutral-600 font-mono">[tap to reveal note]</span>
+            </div>
+
+            <!-- Folded Corner -->
+            <div class="folded-corner" title="Double-tap to fold"></div>
+          </div>
+        `;
+
+        attachNoteEvents(wrapper, note);
+        setupCardDrag(wrapper, note);
+        notesContainer.appendChild(wrapper);
+      });
+    }
+
+    function renderStampBadges(stampList) {
+      if (!stampList || stampList.length === 0) return '';
+      const grouped = {};
+      stampList.forEach(s => {
+        grouped[s.text] = (grouped[s.text] || 0) + 1;
+      });
+
+      return Object.entries(grouped).map(([stampName, count]) => {
+        const stampDef = STAMPS.find(s => s.text === stampName) || STAMPS[0];
+        const rot = ((stampName.charCodeAt(0) * 7) % 15) - 7;
+        return `
+          <span 
+            class="ink-stamp stamp-font text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded border" 
+            style="border-color: ${stampDef.color}; color: ${stampDef.color}; --rot: ${rot}deg; transform: rotate(${rot}deg);"
+          >
+            ${stampName} ${count > 1 ? `×${count}` : ''}
+          </span>
+        `;
+      }).join('');
+    }
+
+    function attachNoteEvents(wrapper, note) {
+      const stickyEl = wrapper.querySelector('.sticky-note');
+
+      // Crumple Action
+      const crumpleBtn = wrapper.querySelector('.crumple-btn');
+      crumpleBtn.onclick = (e) => {
+        e.stopPropagation();
+        sound.playCrumple();
+        wrapper.classList.add('crumpling');
+        setTimeout(() => deleteNote(note.id), 300);
+      };
+
+      // Flip Face-down toggle
+      const flipBtn = wrapper.querySelector('.flip-btn');
+      const noteBack = wrapper.querySelector('.note-back');
+
+      const toggleFlip = (e) => {
+        e.stopPropagation();
+        note.faceDown = !note.faceDown;
+        sound.playFlipSwoosh();
+        stickyEl.classList.toggle('is-facedown', note.faceDown);
+        renderRadarBlips();
+        persistNoteUpdate(note.id, { faceDown: note.faceDown });
+      };
+
+      flipBtn.onclick = toggleFlip;
+      noteBack.onclick = toggleFlip;
+
+      // Fold Corner double-click or tap
+      const foldCorner = wrapper.querySelector('.folded-corner');
+      foldCorner.ondblclick = (e) => {
+        e.stopPropagation();
+        note.folded = !note.folded;
+        stickyEl.classList.toggle('folded', note.folded);
+        sound.playPaperRustle();
+        persistNoteUpdate(note.id, { folded: note.folded });
+      };
+
+      // Stamp Menu Toggle
+      const stampMenuBtn = wrapper.querySelector('.stamp-menu-btn');
+      const stampMenu = wrapper.querySelector('.stamp-menu');
+      stampMenuBtn.onclick = (e) => {
+        e.stopPropagation();
+        const isOpen = !stampMenu.classList.contains('hidden');
+        document.querySelectorAll('.stamp-menu').forEach(m => m.classList.add('hidden'));
+        if (!isOpen) stampMenu.classList.remove('hidden');
+      };
+
+      // Stamp Selection
+      const stampOpts = wrapper.querySelectorAll('.stamp-opt');
+      stampOpts.forEach(btn => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          const stampText = btn.dataset.stamp;
+          stampMenu.classList.add('hidden');
+          addStampToNote(note, stampText);
+        };
+      });
+
+      // Reply Toggle
+      const replyToggleBtn = wrapper.querySelector('.reply-toggle-btn');
+      const replyWrap = wrapper.querySelector('.reply-form-wrap');
+      const replyInput = wrapper.querySelector('.reply-input');
+      replyToggleBtn.onclick = (e) => {
+        e.stopPropagation();
+        const isHidden = replyWrap.classList.contains('hidden');
+        if (isHidden) {
+          activeReplyNoteId = note.id;
+          replyWrap.classList.remove('hidden');
+          setTimeout(() => replyInput.focus(), 60);
+        } else {
+          activeReplyNoteId = null;
+          replyWrap.classList.add('hidden');
+        }
+      };
+
+      // Submit Reply
+      const replyForm = wrapper.querySelector('.reply-form');
+      replyForm.onsubmit = (e) => {
+        e.preventDefault();
+        const text = replyInput.value.trim();
+        if (!text) return;
+        sound.playPaperRustle();
+        addReplyToNote(note, text);
+        replyInput.value = '';
+        activeReplyNoteId = null;
+      };
+    }
+
+    async function addStampToNote(note, stampText) {
+      sound.playStampThud();
+      if (!note.stamps) note.stamps = [];
+      note.stamps.push({
+        text: stampText,
+        stampedAt: Date.now()
+      });
+      renderNotes();
+      persistNoteUpdate(note.id, { stamps: note.stamps });
+    }
+
+    async function addReplyToNote(note, replyText) {
+      if (!note.replies) note.replies = [];
+      note.replies.push({
+        id: 'rep_' + Date.now(),
+        text: replyText,
+        time: Date.now()
+      });
+      renderNotes();
+      persistNoteUpdate(note.id, { replies: note.replies });
+    }
+
+    function setupCardDrag(wrapper, note) {
+      let startX, startY, initialX, initialY;
+      let hasMoved = false;
+
+      const down = (e) => {
+        if (
+          e.target.closest('button') || 
+          e.target.closest('input') || 
+          e.target.closest('form') || 
+          e.target.closest('.replies-box') || 
+          e.target.classList.contains('handwriting') || 
+          e.target.closest('.note-back')
+        ) {
+          return;
+        }
+
+        isDraggingNote = true;
+        hasMoved = false;
+        wrapper.classList.add('dragging');
+        sound.playPaperRustle();
+
+        startX = e.clientX || (e.touches && e.touches[0].clientX);
+        startY = e.clientY || (e.touches && e.touches[0].clientY);
+        initialX = parseFloat(wrapper.style.left) || note.x;
+        initialY = parseFloat(wrapper.style.top) || note.y;
+
+        window.addEventListener('pointermove', move, { passive: true });
+        window.addEventListener('pointerup', up);
+        window.addEventListener('pointercancel', up);
+      };
+
+      const move = (e) => {
+        if (!isDraggingNote) return;
+        const curX = e.clientX || (e.touches && e.touches[0].clientX);
+        const curY = e.clientY || (e.touches && e.touches[0].clientY);
+        const dx = curX - startX;
+        const dy = curY - startY;
+
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved = true;
+
+        const nextX = Math.max(20, Math.min(CANVAS_SIZE - 280, initialX + dx));
+        const nextY = Math.max(20, Math.min(CANVAS_SIZE - 280, initialY + dy));
+
+        wrapper.style.left = `${nextX}px`;
+        wrapper.style.top = `${nextY}px`;
+      };
+
+      const up = () => {
+        if (!isDraggingNote) return;
+        isDraggingNote = false;
+        wrapper.classList.remove('dragging');
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+
+        if (hasMoved) {
+          sound.playPaperRustle();
+          const finalX = Math.round(parseFloat(wrapper.style.left));
+          const finalY = Math.round(parseFloat(wrapper.style.top));
+          note.x = finalX;
+          note.y = finalY;
+          renderRadarBlips();
+          persistNoteUpdate(note.id, { x: finalX, y: finalY });
+        }
+      };
+
+      wrapper.addEventListener('pointerdown', down);
+    }
+
+    stickForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (cooldownRemaining > 0) return;
+
+      const text = postInput.value.trim();
+      if (!text) return;
+
+      sound.playStampThud();
+
+      const vw = window.innerWidth;
+      const vh = wallViewport.clientHeight;
+      const visibleCenterX = -panX + (vw / 2) - 120;
+      const visibleCenterY = -panY + (vh / 2) - 80;
+
+      const jitterX = (Math.random() - 0.5) * 140;
+      const jitterY = (Math.random() - 0.5) * 100;
+      const tilt = Math.floor(Math.random() * 9) - 4;
+
+      const id = 'note_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+      const newNote = {
+        id,
+        text,
+        color: selectedColor,
+        x: Math.round(visibleCenterX + jitterX),
+        y: Math.round(visibleCenterY + jitterY),
+        tilt,
+        folded: false,
+        faceDown: false,
+        stamps: [],
+        replies: [],
+        createdAt: Date.now()
+      };
+
+      postInput.value = '';
+      charCount.textContent = '220';
+      postInput.blur(); // Release virtual keyboard on mobile
+
+      notes.unshift(newNote);
+      renderNotes();
+
+      startCooldown(POST_COOLDOWN_SECONDS);
+
+      if (db && currentUser) {
+        try {
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'wall_notes', id);
+          await setDoc(docRef, newNote);
+        } catch (err) {
+          saveLocalNotes();
+        }
+      } else {
+        saveLocalNotes();
+      }
+    });
+
+    async function persistNoteUpdate(noteId, payload) {
+      if (db && currentUser) {
+        try {
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'wall_notes', noteId);
+          await updateDoc(docRef, payload);
+          return;
+        } catch (err) {
+          console.warn("Firestore update fallback:", err);
+        }
+      }
+      saveLocalNotes();
+    }
+
+    async function deleteNote(noteId) {
+      notes = notes.filter(n => n.id !== noteId);
+      renderNotes();
+
+      if (db && currentUser) {
+        try {
+          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'wall_notes', noteId);
+          await deleteDoc(docRef);
+          return;
+        } catch (err) {
+          console.warn("Firestore delete fallback:", err);
+        }
+      }
+      saveLocalNotes();
+    }
+
+    function saveLocalNotes() {
+      try {
+        localStorage.setItem(`staring_wall_notes_${appId}`, JSON.stringify(notes));
+      } catch (e) {}
+    }
+
+    function loadLocalNotes() {
+      try {
+        const stored = localStorage.getItem(`staring_wall_notes_${appId}`);
+        if (stored) return JSON.parse(stored);
+      } catch (e) {}
+      return [];
+    }
+
+    async function initFirestore() {
+      if (typeof __firebase_config === 'undefined') {
+        initFallback();
+        return;
+      }
+
+      try {
+        const config = JSON.parse(__firebase_config);
+        const app = initializeApp(config);
+        db = getFirestore(app);
+        auth = getAuth(app);
+
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+
+        currentUser = auth.currentUser;
+        if (!currentUser) throw new Error("Auth failed");
+
+        const notesCol = collection(db, 'artifacts', appId, 'public', 'data', 'wall_notes');
+        
+        onSnapshot(notesCol, (snapshot) => {
+          const list = [];
+          snapshot.forEach(docSnap => {
+            list.push({ id: docSnap.id, ...docSnap.data() });
+          });
+
+          list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          notes = list;
+          renderNotes();
+        }, (err) => {
+          console.error("Firestore subscription error:", err);
+          initFallback();
+        });
+
+      } catch (err) {
+        console.warn("Firestore initialization error, using local fallback:", err);
+        initFallback();
+      }
+    }
+
+    function initFallback() {
+      const local = loadLocalNotes();
+      notes = Array.isArray(local) ? local : [];
+      renderNotes();
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+      }[tag] || tag));
+    }
+
+    function formatDate(ms) {
+      const s = Math.floor((Date.now() - ms) / 1000);
+      if (s < 60) return 'just now';
+      if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+      if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+      return `${Math.floor(s / 86400)}d ago`;
+    }
+
+    window.addEventListener('click', (e) => {
+      if (!e.target.closest('.stamp-dropdown')) {
+        document.querySelectorAll('.stamp-menu').forEach(m => m.classList.add('hidden'));
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      updateRadarCamera();
+    });
+
+    window.onload = () => {
+      renderPalette();
+      centerWall(false);
+      setupWallPanning();
+      initLivePresence();
+      initFirestore();
+    };
+  </script>
+</body>
+</html>
